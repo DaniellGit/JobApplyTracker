@@ -1,5 +1,5 @@
-import { LandingHero } from "@/components/blocks/landing-hero";
+import { ApplicationTracker } from "@/components/blocks/application-tracker";
 
 export default function HomePage() {
-  return <LandingHero />;
+  return <ApplicationTracker />;
 }
