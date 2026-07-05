@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import {
   Briefcase,
   CalendarDays,
@@ -8,13 +9,17 @@ import {
   ChevronDown,
   Clock3,
   Loader2,
+  LogOut,
+  Mail,
   Pencil,
   Plus,
   Search,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 type Status = "Wishlist" | "Applied" | "Interview" | "Offer" | "Rejected";
 type Priority = "High" | "Medium" | "Low";
@@ -39,7 +44,6 @@ type FormState = {
   priority: Priority;
 };
 
-const STORAGE_KEY = "gradcrm-applications-v1";
 const statusOptions: Status[] = ["Wishlist", "Applied", "Interview", "Offer", "Rejected"];
 const priorityOptions: Priority[] = ["Low", "Medium", "High"];
 
@@ -58,16 +62,12 @@ const priorityTone: Record<Priority, string> = {
 };
 
 const motivationalQuotes = [
-  "You are doing enough for today. One clear step is still progress.",
-  "It is okay to move slowly. What matters is that you are still moving.",
-  "You do not need to figure out everything at once. Just take the next step.",
-  "This process can feel heavy, but you are handling it with care.",
-  "Even one application updated today is a real win.",
-  "You are allowed to make this search gentler for yourself.",
-  "A quiet day of progress still counts as progress.",
-  "You have not missed your chance. You are still building toward it.",
-  "Take a breath. You only need to do the next useful thing.",
-  "You are trying, learning, and continuing. That matters a lot.",
+  "You only need one clear next step right now.",
+  "A calm system makes the search feel lighter.",
+  "Small updates today still count as real progress.",
+  "You are allowed to make this process gentler for yourself.",
+  "One application handled well is enough for this moment.",
+  "Keeping things organized is already helping future you.",
 ];
 
 const defaultForm = (): FormState => ({
@@ -77,22 +77,6 @@ const defaultForm = (): FormState => ({
   nextStep: "",
   priority: "Medium",
 });
-
-function getStoredApplications(): Application[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Application[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredApplications(items: Application[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-}
 
 function normalizeApplication(app: Application): Application {
   return {
@@ -137,7 +121,149 @@ function SelectField<T extends string>({
   );
 }
 
+function AuthScreen({
+  mode,
+  email,
+  password,
+  authLoading,
+  authError,
+  onModeChange,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+}: {
+  mode: "sign-in" | "sign-up";
+  email: string;
+  password: string;
+  authLoading: boolean;
+  authError: string | null;
+  onModeChange: (mode: "sign-in" | "sign-up") => void;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  const isSignUp = mode === "sign-up";
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(244,114,182,0.18),_transparent_34%),radial-gradient(circle_at_100%_0%,_rgba(251,191,36,0.12),_transparent_20%),linear-gradient(180deg,_#fffdfd_0%,_#fff6fa_42%,_#fef2f6_100%)] px-4 py-6 text-slate-700 sm:px-6 sm:py-8">
+      <div className="mx-auto grid min-h-[calc(100vh-3rem)] max-w-5xl items-center gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_22px_50px_-34px_rgba(244,114,182,0.36)] sm:p-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-pink-200 bg-pink-50 px-3 py-1 text-sm text-pink-600">
+            <Sparkles className="h-4 w-4" />
+            Personal job tracker
+          </div>
+          <h1 className="mt-4 max-w-2xl text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+            Keep your applications private, synced, and easy to manage on any device.
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
+            Sign in once and your tracker stays with your account, not with one browser. That means she can open it on her
+            phone, tablet, or laptop and still see only her own applications.
+          </p>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            {[
+              { title: "Private", note: "Each account only sees its own entries." },
+              { title: "Synced", note: "Changes follow the account across devices." },
+              { title: "Simple", note: "One calm place for roles, status, and next steps." },
+            ].map((item) => (
+              <div key={item.title} className="rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-500">{item.note}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_22px_50px_-34px_rgba(244,114,182,0.36)] sm:p-6">
+          <div className="flex gap-2 rounded-full bg-rose-50 p-1">
+            {[
+              { id: "sign-in" as const, label: "Sign in" },
+              { id: "sign-up" as const, label: "Create account" },
+            ].map((item) => {
+              const active = mode === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onModeChange(item.id)}
+                  className={`flex-1 rounded-full px-4 py-2.5 text-sm font-medium transition ${
+                    active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-5 space-y-3">
+            <label className="block">
+              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                Email
+              </span>
+              <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/95 px-4 py-3 shadow-sm">
+                <Mail className="h-4 w-4 text-pink-500" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  placeholder="name@example.com"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+              </div>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                Password
+              </span>
+              <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/95 px-4 py-3 shadow-sm">
+                <UserRound className="h-4 w-4 text-pink-500" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  placeholder="At least 6 characters"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+              </div>
+            </label>
+
+            {authError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{authError}</div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={authLoading || !email.trim() || password.length < 6}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f43f8e_0%,#fb7185_55%,#f97316_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_42px_-22px_rgba(244,63,94,0.7)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_50px_-20px_rgba(244,63,94,0.78)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+            >
+              {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
+              {isSignUp ? "Create private tracker" : "Open my tracker"}
+            </button>
+
+            <p className="text-sm leading-6 text-slate-500">
+              {isSignUp
+                ? "If email confirmation is enabled in Supabase, confirm the email first and then sign in."
+                : "Use the same email on another device and the same tracker will be there for that account."}
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export function ApplicationTracker() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [applications, setApplications] = useState<Application[]>([]);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [editId, setEditId] = useState<number | string | null>(null);
@@ -151,7 +277,6 @@ export function ApplicationTracker() {
 
   const quoteTimeoutRef = useRef<number | null>(null);
   const feedbackTimeoutRef = useRef<number | null>(null);
-
   const deferredSearch = useDeferredValue(draftSearch.trim().toLowerCase());
 
   const setTransientFeedback = (message: string) => {
@@ -175,33 +300,67 @@ export function ApplicationTracker() {
     quoteTimeoutRef.current = window.setTimeout(() => setQuote(null), 3200);
   };
 
-  useEffect(() => {
-    const initialQuoteHandle = window.setTimeout(() => {
-      showMotivationQuote();
-    }, 250);
+  const getAuthHeaders = () => {
+    if (!session?.access_token) return null;
 
-    const loadApplications = async () => {
-      try {
-        const response = await fetch("/api/applications");
-        if (!response.ok) throw new Error("Unable to load applications");
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    };
+  };
 
-        const data = await response.json();
-        const nextApps = Array.isArray(data) ? data.map(normalizeApplication) : [];
-        setApplications(nextApps);
-        saveStoredApplications(nextApps);
-      } catch {
-        const storedApps = getStoredApplications().map(normalizeApplication);
-        setApplications(storedApps);
-        setFeedback("Using local browser storage for now. Your entries stay on this device.");
-      } finally {
-        setLoading(false);
-      }
+  const loadApplications = async (activeSession: Session) => {
+    const headers = {
+      Authorization: `Bearer ${activeSession.access_token}`,
     };
 
-    loadApplications();
+    const response = await fetch("/api/applications", {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error || "Unable to load applications");
+    }
+
+    const data = (await response.json()) as Application[];
+    setApplications(Array.isArray(data) ? data.map(normalizeApplication) : []);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const boot = async () => {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (!mounted) return;
+
+      if (error) {
+        setAuthError(error.message);
+      }
+
+      setSession(data.session ?? null);
+      setAuthReady(true);
+    };
+
+    void boot();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setApplications([]);
+      setEditId(null);
+      setLoading(true);
+      setAuthError(null);
+    });
 
     return () => {
-      window.clearTimeout(initialQuoteHandle);
+      mounted = false;
+      subscription.unsubscribe();
 
       if (quoteTimeoutRef.current) {
         window.clearTimeout(quoteTimeoutRef.current);
@@ -212,6 +371,35 @@ export function ApplicationTracker() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const initialQuoteHandle = window.setTimeout(() => {
+      showMotivationQuote();
+    }, 250);
+
+    const run = async () => {
+      setLoading(true);
+
+      try {
+        await loadApplications(session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load applications";
+        setTransientFeedback(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
+
+    return () => {
+      window.clearTimeout(initialQuoteHandle);
+    };
+  }, [session]);
 
   const counts = useMemo(() => {
     return applications.reduce(
@@ -242,14 +430,54 @@ export function ApplicationTracker() {
       ]
         .join(" ")
         .toLowerCase();
-      const matchesSearch = !deferredSearch || haystack.includes(deferredSearch);
 
+      const matchesSearch = !deferredSearch || haystack.includes(deferredSearch);
       return matchesStatus && matchesSearch;
     });
   }, [applications, deferredSearch, statusFilter]);
 
+  const handleAuthSubmit = async () => {
+    if (!authEmail.trim() || authPassword.length < 6 || authLoading) return;
+
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      if (authMode === "sign-up") {
+        const { error } = await supabase.auth.signUp({
+          email: authEmail.trim(),
+          password: authPassword,
+        });
+
+        if (error) throw error;
+
+        setTransientFeedback("Account created. If confirmation is required, check email before signing in.");
+        showMotivationQuote("Your tracker now has a private home.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: authEmail.trim(),
+          password: authPassword,
+        });
+
+        if (error) throw error;
+
+        setTransientFeedback("Welcome back. Your tracker is ready.");
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to continue");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const submitNewApplication = async () => {
     if (!form.company.trim() || !form.role.trim() || isSaving) return;
+
+    const headers = getAuthHeaders();
+    if (!headers) {
+      setTransientFeedback("Please sign in again.");
+      return;
+    }
 
     const payload = {
       company: form.company.trim(),
@@ -260,40 +488,28 @@ export function ApplicationTracker() {
       appliedDate: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     };
 
-    const optimisticApp: Application = {
-      id: `local-${Date.now()}`,
-      ...payload,
-    };
-
     setIsSaving(true);
-    setApplications((prev) => {
-      const next = [optimisticApp, ...prev];
-      saveStoredApplications(next);
-      return next;
-    });
-    setForm(defaultForm());
     setTransientFeedback("Saving your application...");
 
     try {
       const response = await fetch("/api/applications", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) throw new Error("Unable to save application");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Unable to save application");
+      }
 
-      const saved = normalizeApplication(await response.json());
-      setApplications((prev) => {
-        const next = prev.map((item) => (item.id === optimisticApp.id ? saved : item));
-        saveStoredApplications(next);
-        return next;
-      });
+      const saved = normalizeApplication((await response.json()) as Application);
+      setApplications((prev) => [saved, ...prev]);
+      setForm(defaultForm());
       setTransientFeedback("Application saved successfully.");
-      showMotivationQuote("That is one more step handled. You can breathe a little easier.");
-    } catch {
-      setTransientFeedback("Saved locally in this browser. You can sync later.");
-      showMotivationQuote("It is saved here for now. You do not have to hold it all in your head.");
+      showMotivationQuote("That is one more step handled.");
+    } catch (error) {
+      setTransientFeedback(error instanceof Error ? error.message : "Unable to save application");
     } finally {
       setIsSaving(false);
     }
@@ -318,6 +534,12 @@ export function ApplicationTracker() {
   const saveEdit = async () => {
     if (!editId) return;
 
+    const headers = getAuthHeaders();
+    if (!headers) {
+      setTransientFeedback("Please sign in again.");
+      return;
+    }
+
     const payload = {
       company: editForm.company.trim(),
       role: editForm.role.trim(),
@@ -326,57 +548,85 @@ export function ApplicationTracker() {
       priority: editForm.priority,
     };
 
-    const previous = applications;
-    const optimistic = applications.map((item) =>
-      item.id === editId ? normalizeApplication({ ...item, ...payload }) : item,
-    );
-
-    setApplications(optimistic);
-    saveStoredApplications(optimistic);
-    setEditId(null);
-    setTransientFeedback("Application updated.");
-
     try {
       const response = await fetch(`/api/applications/${editId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) throw new Error("Unable to update application");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Unable to update application");
+      }
 
-      const saved = normalizeApplication(await response.json());
-      const next = optimistic.map((item) => (item.id === editId ? saved : item));
-      setApplications(next);
-      saveStoredApplications(next);
+      const saved = normalizeApplication((await response.json()) as Application);
+      setApplications((prev) => prev.map((item) => (item.id === editId ? saved : item)));
+      setEditId(null);
+      setTransientFeedback("Application updated.");
       showMotivationQuote("Keeping things updated is caring for your future self.");
-    } catch {
-      setApplications(previous);
-      saveStoredApplications(previous);
-      setTransientFeedback("Could not sync that edit. Your previous data has been restored.");
-      showMotivationQuote("That reset is okay. You still kept things safe and clear.");
+    } catch (error) {
+      setTransientFeedback(error instanceof Error ? error.message : "Unable to update application");
     }
   };
 
   const deleteApplication = async (id: number | string) => {
-    const previous = applications;
-    const next = applications.filter((item) => item.id !== id);
-
-    setApplications(next);
-    saveStoredApplications(next);
+    const headers = getAuthHeaders();
+    if (!headers) {
+      setTransientFeedback("Please sign in again.");
+      return;
+    }
 
     try {
-      const response = await fetch(`/api/applications/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error("Unable to delete application");
+      const response = await fetch(`/api/applications/${id}`, {
+        method: "DELETE",
+        headers,
+      });
 
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Unable to delete application");
+      }
+
+      setApplications((prev) => prev.filter((item) => item.id !== id));
       setTransientFeedback("Application removed.");
       showMotivationQuote("Clearing something out can make the rest feel lighter.");
-    } catch {
-      setApplications(previous);
-      saveStoredApplications(previous);
-      setTransientFeedback("Delete could not sync, so the application was restored.");
+    } catch (error) {
+      setTransientFeedback(error instanceof Error ? error.message : "Unable to delete application");
     }
   };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setTransientFeedback("Signed out.");
+  };
+
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,_#fffdfd_0%,_#fff6fa_42%,_#fef2f6_100%)] px-4">
+        <div className="inline-flex items-center gap-2 rounded-full border border-pink-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+          <Loader2 className="h-4 w-4 animate-spin text-pink-500" />
+          Preparing your tracker...
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <AuthScreen
+        mode={authMode}
+        email={authEmail}
+        password={authPassword}
+        authLoading={authLoading}
+        authError={authError}
+        onModeChange={setAuthMode}
+        onEmailChange={setAuthEmail}
+        onPasswordChange={setAuthPassword}
+        onSubmit={handleAuthSubmit}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(244,114,182,0.18),_transparent_34%),radial-gradient(circle_at_100%_0%,_rgba(251,191,36,0.12),_transparent_20%),linear-gradient(180deg,_#fffdfd_0%,_#fff6fa_42%,_#fef2f6_100%)] px-3 py-4 text-slate-700 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
@@ -390,19 +640,28 @@ export function ApplicationTracker() {
 
         <header className="rounded-[32px] border border-white/70 bg-white/80 p-5 shadow-[0_22px_50px_-34px_rgba(244,114,182,0.36)] sm:p-6">
           <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-pink-200 bg-pink-50 px-3 py-1 text-sm text-pink-600">
                   <Sparkles className="h-4 w-4" />
                   Job tracker
                 </div>
                 <h1 className="max-w-3xl text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl">
-                  Track applications, interviews, and next steps in one place
+                  Track applications, interviews, and next steps in one calm place
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
-                  Built to stay clear and easy to use on phone, tablet, and laptop.
+                  Private to {session.user.email} and available anywhere this account signs in.
                 </p>
               </div>
+
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="inline-flex items-center justify-center gap-2 self-start rounded-full border border-pink-200 bg-white/90 px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-pink-300 hover:text-slate-900"
+              >
+                <LogOut className="h-4 w-4 text-pink-500" />
+                Sign out
+              </button>
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

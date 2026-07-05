@@ -1,19 +1,28 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
-function getSupabaseClient() {
+function getSupabaseClient(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const authorization = request.headers.get("authorization");
 
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!supabaseUrl || !publishableKey) {
     throw new Error("Supabase is not configured yet.");
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
+  if (!authorization) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, publishableKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: authorization,
+      },
     },
   });
 }
@@ -22,7 +31,20 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const body = await request.json();
     const { id } = await params;
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseClient(request);
+
+    if (!supabase) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
 
     const payload = {
       company: body.company,
@@ -45,10 +67,24 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseClient(request);
+
+    if (!supabase) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
     const { error } = await supabase.from("applications").delete().eq("id", id);
 
     if (error) {
